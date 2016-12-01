@@ -1,0 +1,299 @@
+---
+title: 'Bios 6301: Assignment 5'
+author: Josh DeClercq
+output: pdf_document
+---
+
+**Grade 55/50**
+
+Great job, really well done.  Check out how Cole approache Question 2 using lapply and tapply.
+
+**Note:** In the future, for packages that might not be installed by collaborators, you can use the following to check for and install a package:
+
+```{r}
+if("lubridate" %in% rownames(installed.packages()) == FALSE) {
+  install.packages("lubridate",repos="http://cran.rstudio.com/")
+}
+```
+
+
+
+*Due Tuesday, 15 November, 1:00 PM*
+
+$5^{n=day}$ points taken off for each day late.
+
+50 points total.
+
+Submit a single knitr file (named `homework5.rmd`), along with a valid PDF output file. Inside the file, clearly indicate which parts of your responses go with which problems (you may use the original homework document as a template). Add your name as `author` to the file's metadata section. Raw R code/output or word processor files are not acceptable.
+
+Failure to name file `homework5.rmd` or include author name may result in 5 points taken off.
+
+### Question 1 ###
+
+**24 points**
+
+Import the HAART dataset (`haart.csv`) from the GitHub repository into R, and perform the following manipulations: (4 points each)
+
+```{r}
+file <- "https://raw.githubusercontent.com/fonnesbeck/Bios6301/master/datasets/haart.csv"
+```
+
+
+```{r}
+library(lubridate)
+haart1Raw <- read.csv(file, sep = ",", stringsAsFactors = FALSE)
+
+cleanData <- function(haartdata){
+  #Question 1.1
+  haartdata[,'last.visit'] <- as.Date(haartdata[,'last.visit'], format = '%m/%d/%y')
+  haartdata[,'init.date'] <- as.Date(haartdata[,'init.date'],  format = '%m/%d/%y')
+  haartdata[,'date.death'] <- as.Date(haartdata[,'date.death'],  format = '%m/%d/%y')
+
+  #Question 1.2
+  haartdata[,'one.year.death']<-
+    as.numeric(difftime(haartdata[,'date.death'],haartdata[,'init.date'],units="days") < 365)
+  haartdata[,'one.year.death'][which(is.na(haartdata[,'one.year.death']))] <- 0
+  
+  #Question 1.3
+  haartdata[,'lower'] <- pmin(haartdata[,'last.visit'],haartdata[,'date.death'], na.rm = TRUE)
+  haartdata[,'follow.time'] <- difftime(haartdata[,'lower'],
+                                        haartdata[,'init.date'], units = 'days' )
+  haartdata[,'follow.time'][which(haartdata[,'follow.time'] > 365)] <- 365
+
+  #Question 1.4
+  haartdata[,'lost.follow'] <- 0
+  haartdata[,'lost.follow'][which(haartdata[,'follow.time'] < 365 & 
+                                    haartdata[,'death'] == 0)] <- 1
+  
+  #Question 1.5
+  init.reg <- as.character(haartdata[,'init.reg'])
+  all.reg <- unique(unlist(strsplit(init.reg, ",")))
+  row.reg <- strsplit(init.reg, ",")
+  
+  dim(sapply(all.reg, function(j) sapply(row.reg, function(i) j %in% i)))
+  user.reg <- sapply(all.reg, function(j) sapply(row.reg, function(i) j %in% i))
+  haartdata<- cbind(haartdata, user.reg)
+  
+  return(haartdata)
+}
+haart1 <- cleanData(haart1Raw)
+```
+
+
+1. Convert date columns into a usable (for analysis) format.  Use the `table` command to display the counts of the year from `init.date`.
+
+```{r}
+table(year(haart1[,'init.date']))
+```
+
+2. Create an indicator variable (one which takes the values 0 or 1 only) to represent death within 1 year of the initial visit.  How many observations died in year 1?
+
+```{r}
+sum(haart1[,'one.year.death'])
+```
+
+3. Use the `init.date`, `last.visit` and `death.date` columns to calculate a followup time (in days), which is the difference between the first and either the last visit or a death event (whichever comes first). If these times are longer than 1 year, censor them (this means if the value is above 365, set followup to 365).  Print the quantile for this new variable.
+
+```{r}
+quantile(haart1[,'follow.time'])
+```
+
+4. Create another indicator variable representing loss to followup; this means the observation is not known to be dead but does not have any followup visits after the first year.  How many records are lost-to-followup?
+
+```{r}
+sum(haart1[,'lost.follow'])
+```
+
+5. Recall our work in class, which separated the `init.reg` field into a set of indicator variables, one for each unique drug. Create these fields and append them to the database as new columns.  Which drug regimen are found over 100 times?
+
+
+```{r}
+threeTC <- which(colnames(haart1) == '3TC')
+FPV <- which(colnames(haart1) == 'FPV')
+names(which(colSums(haart1[,c(threeTC:FPV)])>100))
+```
+
+6. The dataset `haart2.csv` contains a few additional observations for the same study. Import these and append them to your master dataset (if you were smart about how you coded the previous steps, cleaning the additional observations should be easy!).  Show the first five records and the last five records of the complete (and clean) data set.
+
+```{r}
+file2 <- 'https://raw.githubusercontent.com/fonnesbeck/Bios6301/master/datasets/haart2.csv'
+haart2Raw <- read.csv(file2, sep = ",", stringsAsFactors = FALSE)
+combinedRaw <- rbind(haart1Raw, haart2Raw)
+# haart2
+
+file2 <- 'https://raw.githubusercontent.com/fonnesbeck/Bios6301/master/datasets/haart2.csv'
+combinedClean <- cleanData(combinedRaw)
+
+combinedClean[c(1:5, (nrow(combinedClean)-4):nrow(combinedClean) ),]
+```
+
+### Question 2 ###
+
+**14 points**
+
+Use the following code to generate data for patients with repeated measures of A1C (a test for levels of blood glucose).
+
+```{r}
+genData <- function(n) {
+    if(exists(".Random.seed", envir = .GlobalEnv)) {
+        save.seed <- get(".Random.seed", envir= .GlobalEnv)
+        on.exit(assign(".Random.seed", save.seed, envir = .GlobalEnv))
+    } else {
+        on.exit(rm(".Random.seed", envir = .GlobalEnv))
+    }
+    set.seed(n)
+    subj <- ceiling(n / 10)
+    id <- sample(subj, n, replace=TRUE)
+    times <- as.integer(difftime(as.POSIXct("2005-01-01"), as.POSIXct("2000-01-01"), units='secs'))
+    dt <- as.POSIXct(sample(times, n), origin='2000-01-01')
+    mu <- runif(subj, 4, 10)
+    a1c <- unsplit(mapply(rnorm, tabulate(id), mu, SIMPLIFY=FALSE), id)
+    data.frame(id, dt, a1c)
+}
+x <- genData(500)
+```
+
+Perform the following manipulations: (2 points each)
+
+1. Order the data set by `id` and `dt`.
+
+```{r}
+xsort <- x[order(x[,'id'], x[,'dt']),]
+```
+
+2. For each `id`, determine if there is more than a one year gap in between observations.  Add a new row at the one year mark, with the `a1c` value set to missing.  A two year gap would require two new rows, and so forth.
+
+```{r}
+di <- numeric(500)
+
+for (i in 2:500){
+  t1 <- xsort[i,'dt']
+  t2 <- xsort[i-1,'dt']
+  if (xsort[i-1,'id'] == xsort[i,'id']){
+  di[i] <- difftime(t1,t2  , units = 'days')
+  }
+}
+
+for( i in length(di):1){
+  if (floor(di/365)[i]>0){
+    for(j in floor(di/365)[i]:1){
+    newRow <- list(xsort[,'id'][i-1],xsort[,'dt'][i-1] + years(j), NA)
+    xsort <- rbind(xsort[1:i-1,], newRow, xsort[i:length(xsort[,'id']),])
+    }
+  } 
+}
+```
+
+3. Create a new column `visit`.  For each `id`, add the visit number.  This should be 1 to `n` where `n` is the number of observations for an individual.  This should include the observations created with missing a1c values.
+
+```{r}
+xsort[,'visit'] <- 1
+for (i in 2:nrow(xsort)){
+  if (xsort[,'id'][i-1] == xsort[,'id'][i]){
+    xsort[,'visit'][i] <- xsort[,'visit'][i-1] + 1
+  }
+}
+```
+
+4. For each `id`, replace missing values with the mean `a1c` value for that individual.
+
+```{r}
+A1C <- 0
+for (i in 1:nrow(xsort)){
+    A1C[i] <- mean(xsort[,'a1c'][xsort[,'id'] == xsort[,'id'][i]], na.rm = TRUE)
+}
+xsort[,'a1c'][which(is.na(xsort[,'a1c']))] <-  A1C[which(is.na(xsort[,'a1c']))]
+
+```
+
+5. Print mean `a1c` for each `id`.
+
+```{r}
+a1cMean <- 0
+for (i in 1:50){
+  a1cMean[i] <- mean(as.numeric(xsort[,'a1c'][xsort[,'id'] == i]), na.rm= TRUE)
+}
+a1cdf <- cbind(unique(xsort[,'id']),a1cMean)
+colnames(a1cdf) <- c('id', 'mean a1c')
+a1cdf
+```
+
+6. Print total number of visits for each `id`.
+
+```{r}
+library(plyr)
+totvis <-cbind(unique(xsort[,'id']),count(as.numeric(xsort[,'id']))$freq)
+colnames(totvis) <- c('id', 'total visits')
+totvis
+```
+
+7. Print the observations for `id = 15`.
+
+```{r}
+xsort[xsort[,'id'] == 15,]
+```
+
+### Question 3 ###
+
+**10 points**
+
+Import the `addr.txt` file from the GitHub repository.  This file contains a listing of names and addresses (thanks google).  Parse each line to create a data.frame with the following columns: lastname, firstname, streetno, streetname, city, state, zip.  Keep middle 
+initials or abbreviated names in the firstname column.  Print out the entire data.frame.
+
+```{r}
+file3 <- 'https://raw.githubusercontent.com/fonnesbeck/Bios6301/master/datasets/addr.txt'
+addr <- readLines(file3)
+addr<- gsub('(\\s){2,}', ',', addr)
+addr <- gsub('([0-9]{3})(\\s)([A-Z]{1})', '\\1,\\3', addr)
+addr <- do.call(rbind, strsplit(addr,','))
+colnames(addr) <- c('lastname', 'firstname', 'streetno', 'streetname', 'city', 'state', 'zip')
+addr[,7] <- gsub('O', '0', addr[,7]) # Letter 'O' where zeros should be!!!
+addr <- gsub('^(\\s)|(\\s)$', '', addr) #remove spaces before and after text
+addr
+```
+
+### Question 4 ###
+
+**2 points**
+
+The first argument to most functions that fit linear models are formulas.  The following example defines the response variable `death` and allows the model to incorporate all other variables as terms. `.` is used to mean all columns not otherwise in the formula.
+
+```{r}
+url <- "https://github.com/fonnesbeck/Bios6301/raw/master/datasets/haart.csv"
+haart_df <- read.csv(url)[,c('death','weight','hemoglobin','cd4baseline')]
+coef(summary(glm(death ~ ., data=haart_df, family=binomial(logit))))
+```
+
+Now imagine running the above several times, but with a different response and data set each time.  Here's a function:
+
+```{r}
+myfun <- function(dat, response) {
+  form <- as.formula(response ~ .)
+  coef(summary(glm(form, data=dat, family=binomial(logit))))
+}
+```
+
+Unfortunately, it doesn't work. `tryCatch` is "catching" the error so that this file can be knit to PDF.
+
+```{r}
+tryCatch(myfun(haart_df, death), error = function(e) e)
+```
+
+What do you think is going on?  Consider using `debug` to trace the problem.
+
+The first thing that was going wrong was that 'death' was not defined as a global variable. While that did get the function to work, myfun did not return the same output as running the code outside of the function. I determined that the source of the error was not that death was not defined as a global variable, but that the as.formula function wasn't doing exactly what I thought it would do. I found a function to make a variable name a string, and then pasted it to the '~.' before passing it to as.function. This seemed to fix myfun so that I would not need to supply any external information outside of the function to get it to work. 
+
+**5 bonus points**
+
+Create a working function.
+
+```{r}
+myfun2 <- function(dat, response) {
+  form <- as.formula(paste(substitute(response), '~ .'))
+  coef(summary(glm(form , data=dat, family=binomial(logit))))
+}
+```
+
+```{r}
+tryCatch(myfun2(haart_df, death), error = function(e) e)
+```
